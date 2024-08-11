@@ -17,7 +17,7 @@ class System:
         return tmp
 
     def GetProgressCost(self, u_i):
-        return (0.5 * u_i.T @ u_i)
+        return (0.5 * (self.T_s * u_i).T @ (self.T_s * u_i))
 
     def GetTerminalCostToGoJacobian(self, x_N):
         return 1000.0 * (x_N - self.x_f)
@@ -30,27 +30,39 @@ class System:
         return np.array([[0.0],
                          [0.0],
                          [0.0],
-                         [u_i[0][0]],
-                         [u_i[1][0]]
+                         [self.T_s * u_i[0][0]],
+                         [self.T_s * u_i[1][0]]
                          ])
 
     def GetCostToGoHession(self, x_i, u_i):
         hession = np.zeros((self.N_state + self.N_control, self.N_state + self.N_control))
-        hession[-2, -2] = 1.0
-        hession[-1, -1] = 1.0
+        hession[-2, -2] = 1.0 * self.T_s
+        hession[-1, -1] = 1.0 * self.T_s
         return hession
 
     def Get_A(self, x_i, u_i):
-        return np.eye(3)
+        A = np.eye(3)
+        # A[0][2] = -math.sin(x_i[-1]) * u_i[0] * self.T_s
+        # A[1][2] = math.cos(x_i[-1]) * u_i[0] * self.T_s
+        return A
 
     def Get_B(self, x_i, u_i):
         tmp_1 = math.cos(x_i[-1][0])
         tmp_2 = math.sin(x_i[-1][0])
         return self.T_s * np.array([[tmp_1, 0.0], [tmp_2, 0.0], [0.0, 1.0]])
 
+    def Get_A_inter(self, x_i, u_i):
+        A = np.eye(3)
+        return A
+
+    def Get_B_inter(self, x_i, u_i):
+        tmp_1 = math.cos(x_i[-1][0])
+        tmp_2 = math.sin(x_i[-1][0])
+        return self.T_s * np.array([[tmp_1, 0.0], [tmp_2, 0.0], [0.0, 1.0]])
+
     def Calc_next_state(self, x_i, u_i):
-        A = self.Get_A(x_i, u_i)
-        B = self.Get_B(x_i, u_i)
+        A = self.Get_A_inter(x_i, u_i)
+        B = self.Get_B_inter(x_i, u_i)
         tmp = A @ x_i + B @ u_i
         return tmp
 
@@ -64,7 +76,7 @@ class iLQR:
         for it in range(max_iters):
             K, d, delta_J_hat = self.BackwardPass(system, x_state, u_control)
             if it > 3 and np.abs(delta_J_hat) < 1e-5: break
-            x_state_new, u_control_new, cost_new = self.ForwardPass(system, x_init, u_init, K, d)
+            x_state_new, u_control_new, cost_new = self.ForwardPass(system, x_state, u_control, K, d)
             if cost_old - cost_new > 0:
                 cost_old = cost_new
                 x_state = x_state_new

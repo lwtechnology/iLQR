@@ -9,10 +9,10 @@ N_control = 2
 x_0 = np.array([[0.0], [0.0], [0.0]])
 x_f = np.array([[2.0], [7.0], [math.pi * 0.8]])
 
-T_s = 0.5
+T_s = 0.1
 T = 10
 T_N = int(T / T_s)
-max_iters = 100
+max_iters = 50
 
 sys = System(N_state, N_control, x_f, T_s, T_N)
 
