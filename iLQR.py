@@ -2,42 +2,65 @@ import numpy as np
 import math
 
 
-# J = 1/2(1000 * (x_N - x_f)^2) + 1/2 sum_0_N-1(v_k^2 + w_k^2)
+# J = 1/2 * x_N_gain * (x_N - x_f)^2) + 1/2 * u_i_gain * sum_0_N-1(v_k^2 + w_k^2)
+# 约束为 x_i[0][0] < 3.0
+# 处理之后的cost函数为：J = 1/2(1000 * (x_N - x_f)^2) + 1/2 sum_0_N-1((v_k^2 + w_k^2) -1/t * log(-(x_k[0][0] - 3.0)))
 class System:
 
-    def __init__(self, N_state, N_control, x_f, T_s, T_N):
+    def __init__(self, N_state, N_control, x_f, T_s, T_N, constrained, t, x_max, x_N_gain, u_i_gain):
         self.N_state = N_state
         self.N_control = N_control
         self.x_f = x_f
         self.T_s = T_s
         self.T_N = T_N
+        self.constrained = constrained
+        self.t = t
+        self.x_max = x_max
+        self.x_N_gain = x_N_gain
+        self.u_i_gain = u_i_gain
 
     def GetTerminalCost(self, x_N):
-        tmp = (500.0 * (x_N - self.x_f).T @ (x_N - self.x_f))
+        tmp = (0.5 * self.x_N_gain * (x_N - self.x_f).T @ (x_N - self.x_f))
         return tmp
 
-    def GetProgressCost(self, u_i):
-        return (0.5 * (self.T_s * u_i).T @ (self.T_s * u_i))
+    def GetProgressCost(self, u_i, x_i):
+        if self.constrained:
+            return (0.5 * self.u_i_gain *  (self.T_s * u_i).T @ (self.T_s * u_i)) - 1.0 / self.t * math.log(self.x_max - x_i[0][0])
+        else:
+            return (0.5 * self.u_i_gain * (self.T_s * u_i).T @ (self.T_s * u_i))
 
     def GetTerminalCostToGoJacobian(self, x_N):
-        return 1000.0 * (x_N - self.x_f)
+        return self.x_N_gain * (x_N - self.x_f)
 
     def GetTerminalCostToGoHession(self, x_N):
-        return 1000.0 * np.eye(self.N_state)
+        return self.x_N_gain * np.eye(self.N_state)
 
     # x, u
     def GetCostToGoJacobian(self, x_i, u_i):
-        return np.array([[0.0],
-                         [0.0],
-                         [0.0],
-                         [self.T_s * u_i[0][0]],
-                         [self.T_s * u_i[1][0]]
-                         ])
+        if self.constrained:
+            return np.array([[1.0 / self.t / (self.x_max - x_i[0][0])],
+                             [0.0],
+                             [0.0],
+                             [self.u_i_gain * self.T_s * u_i[0][0]],
+                             [self.u_i_gain * self.T_s * u_i[1][0]]
+                             ])
+        else:
+            return np.array([[0.0],
+                             [0.0],
+                             [0.0],
+                             [self.u_i_gain * self.T_s * u_i[0][0]],
+                             [self.u_i_gain * self.T_s * u_i[1][0]]
+                             ])
 
     def GetCostToGoHession(self, x_i, u_i):
         hession = np.zeros((self.N_state + self.N_control, self.N_state + self.N_control))
-        hession[-2, -2] = 1.0 * self.T_s
-        hession[-1, -1] = 1.0 * self.T_s
+        if self.constrained:
+            hession[0, 0] = 1.0 / self.t / ((self.x_max - x_i[0][0])**2)
+            hession[-2, -2] = self.u_i_gain * self.T_s
+            hession[-1, -1] = self.u_i_gain * self.T_s
+        else:
+            hession[-2, -2] = self.u_i_gain * self.T_s
+            hession[-1, -1] = self.u_i_gain * self.T_s
         return hession
 
     def Get_A(self, x_i, u_i):
@@ -81,7 +104,7 @@ class iLQR:
                 cost_old = cost_new
                 x_state = x_state_new
                 u_control = u_control_new
-        return x_state
+        return x_state, u_control, cost_old
 
     def BackwardPass(self, system, x_state, u_control):
         K_i = np.zeros((system.N_control, system.N_state))
@@ -136,12 +159,17 @@ class iLQR:
 
         for i in range(0, system.T_N):
             u_last = u_control[i * system.N_control: (i + 1) * system.N_control]
-            delta_x = x_state_new[i * system.N_state: (i + 1) * system.N_state] - x_state[i * system.N_state: (i + 1) * system.N_state]
-            u_control_new[i * system.N_control: (i + 1) * system.N_control] = u_last + K[i * system.N_control: (i + 1) * system.N_control] @ delta_x + d[i * system.N_control:(i + 1) * system.N_control]
+            delta_x = x_state_new[i * system.N_state: (i + 1) * system.N_state] - x_state[i * system.N_state: (
+                                                                                                                          i + 1) * system.N_state]
+            u_control_new[i * system.N_control: (i + 1) * system.N_control] = u_last + K[i * system.N_control: (
+                                                                                                                       i + 1) * system.N_control] @ delta_x + d[
+                                                                                                                                                              i * system.N_control:(
+                                                                                                                                                                                           i + 1) * system.N_control]
             x_state_new[(i + 1) * system.N_state: (i + 2) * system.N_state] = system.Calc_next_state(
                 x_state_new[i * system.N_state: (i + 1) * system.N_state],
                 u_control_new[i * system.N_control: (i + 1) * system.N_control])
-            cost_new += system.GetProgressCost(u_control_new[i * system.N_control: (i + 1) * system.N_control])
+            cost_new += system.GetProgressCost(u_control_new[i * system.N_control: (i + 1) * system.N_control],
+                                               x_state_new[i * system.N_state: (i + 1) * system.N_state])
 
         cost_new += system.GetTerminalCost(x_state_new[-3:])
 
